@@ -1,0 +1,163 @@
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import seaborn as sns
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+
+# Load dataset
+@st.cache_data
+def load_data():
+    df = pd.read_csv(r"C:\Users\ravik\Downloads\533\ai_ghibli_trend_dataset_v2.csv")
+    df['creation_date'] = pd.to_datetime(df['creation_date'])
+    df['prompt_length'] = df['prompt'].apply(lambda x: len(str(x).split()))
+    return df
+
+df = load_data()
+
+# Extract category from prompt
+def extract_category(prompt):
+    prompt = prompt.lower()
+    if "forest" in prompt or "nature" in prompt or "ocean" in prompt:
+        return "Nature"
+    elif "city" in prompt or "village" in prompt or "urban" in prompt or "market" in prompt:
+        return "Urban"
+    elif "magic" in prompt or "enchanted" in prompt or "fantasy" in prompt or "floating" in prompt:
+        return "Fantasy"
+    else:
+        return "Other"
+
+df['category'] = df['prompt'].apply(extract_category)
+
+# Sidebar Navigation
+st.sidebar.title("AI Ghibli Dashboard")
+option = st.sidebar.radio("Select Question to Explore:", [
+    "Q1: Engagement by Category",
+    "Q2: Engagement by Platform",
+    "Q3: Monthly Engagement Trends",
+    "Q4: Prompt Length vs Likes",
+    "Q5: Best Time of Day to Post",
+    "Q6: Word Cloud of Top Prompts",
+    "Q7: Engagement by Resolution",
+    "Q8: Posting Frequency vs Engagement",
+    "Q9: Heatmap of Platform x Category",
+    "Q10: Top 10 Prompts Table"
+])
+
+# Q1
+if option == "Q1: Engagement by Category":
+    avg = df.groupby('category')[['likes', 'shares']].mean().reset_index()
+    melted = avg.melt(id_vars='category', value_vars=['likes', 'shares'],
+                      var_name='Engagement Type', value_name='Average Value')
+    st.plotly_chart(px.bar(melted, x='category', y='Average Value', color='Engagement Type',
+                           barmode='group', title='Average Likes and Shares by Prompt Category'))
+
+# Q2
+elif option == "Q2: Engagement by Platform":
+    avg = df.groupby('platform')[['likes', 'shares']].mean().reset_index()
+    melted = avg.melt(id_vars='platform', value_vars=['likes', 'shares'],
+                      var_name='Engagement Type', value_name='Average Value')
+    melted = melted.sort_values(by='Average Value', ascending=False)
+    st.plotly_chart(px.bar(melted, y='platform', x='Average Value', color='Engagement Type',
+                           orientation='h', title='Average Likes and Shares by Platform'))
+
+# Q3
+elif option == "Q3: Monthly Engagement Trends":
+    df['month'] = df['creation_date'].dt.to_period('M').astype(str)
+    monthly = df.groupby('month')[['likes', 'shares']].mean().reset_index()
+    monthly['month'] = pd.to_datetime(monthly['month'])
+    monthly = monthly.sort_values(by='month')
+    monthly['month_str'] = monthly['month'].dt.strftime('%Y-%m')
+    melted = monthly.melt(id_vars='month_str', value_vars=['likes', 'shares'],
+                          var_name='Engagement Type', value_name='Average Value')
+    st.plotly_chart(px.line(melted, x='month_str', y='Average Value', color='Engagement Type',
+                            markers=True, title='Q3: Monthly Likes and Shares Trends'))
+
+# Q4
+elif option == "Q4: Prompt Length vs Likes":
+    top = df.sort_values(by='likes', ascending=False).head(200).copy()
+    np.random.seed(42)
+    top['prompt_length_jitter'] = top['prompt_length'] + np.random.uniform(-0.3, 0.3, size=len(top))
+    fig = px.scatter(top, x='prompt_length_jitter', y='likes', size='shares', color='platform',
+                     facet_col='platform', opacity=0.6, size_max=15,
+                     title='Prompt Length vs Likes (Top 200)')
+    st.plotly_chart(fig)
+
+# Q5
+elif option == "Q5: Best Time of Day to Post":
+    df['hour'] = df['creation_date'].dt.hour
+    def time_of_day(h):
+        if 5 <= h < 12: return 'Morning'
+        elif 12 <= h < 17: return 'Afternoon'
+        elif 17 <= h < 21: return 'Evening'
+        else: return 'Night'
+    df['time_of_day'] = df['hour'].apply(time_of_day)
+    fig = px.box(df, x='time_of_day', y='likes', color='time_of_day',
+                 title='Engagement by Time of Day')
+    st.plotly_chart(fig)
+
+# Q6
+elif option == "Q6: Word Cloud of Top Prompts":
+    top_prompts = df.sort_values(by='likes', ascending=False).head(100)['prompt']
+    text = " ".join(top_prompts.astype(str))
+    wordcloud = WordCloud(width=800, height=400, background_color='white', colormap='viridis').generate(text)
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.imshow(wordcloud, interpolation='bilinear')
+    ax.axis('off')
+    st.pyplot(fig)
+
+# Q7
+elif option == "Q7: Engagement by Resolution":
+    avg = df.groupby('resolution')[['likes', 'shares']].mean().reset_index()
+    melted = avg.melt(id_vars='resolution', value_vars=['likes', 'shares'],
+                      var_name='Engagement Type', value_name='Average Value')
+    st.plotly_chart(px.bar(melted, x='resolution', y='Average Value', color='Engagement Type',
+                           barmode='group', title='Engagement by Image Resolution'))
+
+# Q8
+elif option == "Q8: Posting Frequency vs Engagement":
+    df['week'] = df['creation_date'].dt.to_period('W')
+    weekly = df.groupby(['user_id', 'week']).size().reset_index(name='posts_per_week')
+    avg_freq = weekly.groupby('user_id')['posts_per_week'].mean().reset_index(name='avg_posts_per_week')
+    df = df.merge(avg_freq, on='user_id', how='left')
+    max_freq = df['avg_posts_per_week'].max()
+    bin_edges = [0, 1, 2, 3, 5, 10, 20, max_freq + 1]
+    bin_labels = ['<1', '1-2', '2-3', '3-5', '5-10', '10-20', '20+']
+    df['posting_bin'] = pd.cut(df['avg_posts_per_week'], bins=bin_edges, labels=bin_labels, include_lowest=True)
+    grouped = df.groupby('posting_bin')[['likes', 'shares']].mean().reset_index()
+    melted = grouped.melt(id_vars='posting_bin', value_vars=['likes', 'shares'],
+                          var_name='Engagement Type', value_name='Average Engagement')
+    st.plotly_chart(px.line(melted, x='posting_bin', y='Average Engagement', color='Engagement Type',
+                            markers=True, title='Q8: Posting Frequency vs Engagement'))
+
+# Q9
+elif option == "Q9: Heatmap of Platform x Category":
+    pivot = df.groupby(['platform', 'category'])['likes'].mean().reset_index().pivot(
+        index='platform', columns='category', values='likes')
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.heatmap(pivot, annot=True, fmt=".0f", cmap="viridis", linewidths=0.5, linecolor='white', ax=ax)
+    ax.set_title("Avg Likes by Platform and Category")
+    st.pyplot(fig)
+
+# Q10
+elif option == "Q10: Top 10 Prompts Table":
+    df['total_engagement'] = df['likes'] + df['shares']
+    top10 = df.sort_values(by='total_engagement', ascending=False).head(10)
+    table = top10[[
+        'prompt', 'likes', 'shares', 'prompt_length',
+        'platform', 'category', 'resolution',
+        'is_hand_edited', 'ethical_concerns_flag'
+    ]].rename(columns={
+        'prompt': 'Prompt',
+        'likes': 'Likes',
+        'shares': 'Shares',
+        'prompt_length': 'Word Count',
+        'platform': 'Platform',
+        'category': 'Category',
+        'resolution': 'Resolution',
+        'is_hand_edited': 'Hand Edited',
+        'ethical_concerns_flag': 'Flagged'
+    })
+    st.dataframe(table.set_index('Prompt'))
